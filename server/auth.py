@@ -10,7 +10,7 @@ from jose import jwt
 # ==================================================
 
 pwd_context = CryptContext(
-    schemes=["bcrypt"],
+    schemes=["argon2"],
     deprecated="auto"
 )
 
