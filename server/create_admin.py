@@ -1,3 +1,5 @@
+import os
+
 from database import Base, engine, SessionLocal
 from models import (
     User,
@@ -24,6 +26,29 @@ ADMIN_PASSWORD = "admin123"
 
 
 # ============================================================
+# SHOW DATABASE TYPE
+# ============================================================
+
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "sqlite:///./multiprint_licensing.db"
+)
+
+if DATABASE_URL.startswith("postgresql"):
+    DATABASE_TYPE = "PostgreSQL"
+else:
+    DATABASE_TYPE = "SQLite"
+
+
+print()
+print("=" * 60)
+print("MULTIPRINT LICENSING - ADMIN CREATION")
+print("=" * 60)
+print(f"DATABASE : {DATABASE_TYPE}")
+print("=" * 60)
+
+
+# ============================================================
 # CREATE ADMIN
 # ============================================================
 
@@ -40,14 +65,14 @@ try:
     if existing_admin:
 
         print()
-        print("=" * 50)
+        print("=" * 60)
         print("ADMIN ACCOUNT ALREADY EXISTS")
-        print("=" * 50)
+        print("=" * 60)
         print(f"ID       : {existing_admin.id}")
         print(f"USERNAME : {existing_admin.username}")
         print(f"ADMIN    : {existing_admin.is_admin}")
         print(f"ACTIVE   : {existing_admin.is_active}")
-        print("=" * 50)
+        print("=" * 60)
 
     else:
 
@@ -63,15 +88,15 @@ try:
         db.refresh(admin)
 
         print()
-        print("=" * 50)
+        print("=" * 60)
         print("ADMINISTRATOR CREATED SUCCESSFULLY")
-        print("=" * 50)
+        print("=" * 60)
         print(f"ID       : {admin.id}")
-        print(f"USERNAME : {admin.username}")
+        print(f"USERNAME : {ADMIN_USERNAME}")
         print(f"PASSWORD : {ADMIN_PASSWORD}")
         print(f"ADMIN    : {admin.is_admin}")
         print(f"ACTIVE   : {admin.is_active}")
-        print("=" * 50)
+        print("=" * 60)
 
 finally:
 
