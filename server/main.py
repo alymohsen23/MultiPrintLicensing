@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 import secrets
 import string
+import socket
 
 from fastapi import (
     FastAPI,
@@ -37,6 +38,14 @@ from offline_crypto import sign_authorization
 # ============================================================
 # DATABASE
 # ============================================================
+
+NEON_HOST = "ep-young-truth-b4z9enrh.c-6.us-east-2.aws.neon.tech"
+
+try:
+    dns_result = socket.gethostbyname_ex(NEON_HOST)
+    print("DNS TEST SUCCESS:", dns_result)
+except Exception as e:
+    print("DNS TEST FAILED:", repr(e))
 
 Base.metadata.create_all(bind=engine)
 
