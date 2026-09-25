@@ -1,12 +1,7 @@
 import os
 
 from database import Base, engine, SessionLocal
-from models import (
-    User,
-    SoftwareEntitlement,
-    Subscription,
-    MachineBinding
-)
+from models import User
 from auth import hash_password
 
 
@@ -18,15 +13,31 @@ Base.metadata.create_all(bind=engine)
 
 
 # ============================================================
-# ADMIN ACCOUNT
+# ADMIN CONFIGURATION
 # ============================================================
 
-ADMIN_USERNAME = "admin"
-ADMIN_PASSWORD = "admin123"
+ADMIN_USERNAME = os.getenv(
+    "ADMIN_USERNAME"
+)
+
+ADMIN_PASSWORD = os.getenv(
+    "ADMIN_PASSWORD"
+)
+
+
+if not ADMIN_USERNAME:
+    raise RuntimeError(
+        "ADMIN_USERNAME environment variable is not set"
+    )
+
+if not ADMIN_PASSWORD:
+    raise RuntimeError(
+        "ADMIN_PASSWORD environment variable is not set"
+    )
 
 
 # ============================================================
-# SHOW DATABASE TYPE
+# DATABASE TYPE
 # ============================================================
 
 DATABASE_URL = os.getenv(
@@ -45,6 +56,7 @@ print("=" * 60)
 print("MULTIPRINT LICENSING - ADMIN CREATION")
 print("=" * 60)
 print(f"DATABASE : {DATABASE_TYPE}")
+print(f"USERNAME : {ADMIN_USERNAME}")
 print("=" * 60)
 
 
@@ -58,7 +70,9 @@ try:
 
     existing_admin = (
         db.query(User)
-        .filter(User.username == ADMIN_USERNAME)
+        .filter(
+            User.username == ADMIN_USERNAME
+        )
         .first()
     )
 
@@ -78,7 +92,9 @@ try:
 
         admin = User(
             username=ADMIN_USERNAME,
-            password_hash=hash_password(ADMIN_PASSWORD),
+            password_hash=hash_password(
+                ADMIN_PASSWORD
+            ),
             is_active=True,
             is_admin=True
         )
@@ -92,8 +108,7 @@ try:
         print("ADMINISTRATOR CREATED SUCCESSFULLY")
         print("=" * 60)
         print(f"ID       : {admin.id}")
-        print(f"USERNAME : {ADMIN_USERNAME}")
-        print(f"PASSWORD : {ADMIN_PASSWORD}")
+        print(f"USERNAME : {admin.username}")
         print(f"ADMIN    : {admin.is_admin}")
         print(f"ACTIVE   : {admin.is_active}")
         print("=" * 60)
