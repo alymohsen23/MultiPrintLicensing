@@ -49,20 +49,12 @@ class User(Base):
         nullable=False
     )
 
-    # --------------------------------------------------------
-    # SOFTWARE ENTITLEMENT
-    # --------------------------------------------------------
-
     software_entitlement = relationship(
         "SoftwareEntitlement",
         back_populates="user",
         uselist=False,
         cascade="all, delete-orphan",
     )
-
-    # --------------------------------------------------------
-    # SUBSCRIPTION
-    # --------------------------------------------------------
 
     subscription = relationship(
         "Subscription",
@@ -71,14 +63,16 @@ class User(Base):
         cascade="all, delete-orphan",
     )
 
-    # --------------------------------------------------------
-    # MACHINE BINDING
-    # --------------------------------------------------------
-
     machine_binding = relationship(
         "MachineBinding",
         back_populates="user",
         uselist=False,
+        cascade="all, delete-orphan",
+    )
+
+    offline_authorizations = relationship(
+        "OfflineAuthorization",
+        back_populates="user",
         cascade="all, delete-orphan",
     )
 
@@ -186,7 +180,7 @@ class Subscription(Base):
 
 class MachineBinding(Base):
     """
-    One-and-only-one Windows computer binding per customer.
+    One Windows computer binding per customer.
 
     A customer can have only one registered computer.
     """
@@ -231,4 +225,80 @@ class MachineBinding(Base):
     user = relationship(
         "User",
         back_populates="machine_binding"
+    )
+
+
+# ============================================================
+# OFFLINE AUTHORIZATION
+# ============================================================
+
+class OfflineAuthorization(Base):
+    """
+    Records every 30-day offline authorization issued by the server.
+
+    The actual authorization is signed cryptographically and stored
+    by the desktop application.
+
+    This database record gives the server an audit trail and allows
+    future authorization-management functionality.
+    """
+
+    __tablename__ = "offline_authorizations"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True
+    )
+
+    authorization_id = Column(
+        String(64),
+        unique=True,
+        index=True,
+        nullable=False
+    )
+
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id"),
+        nullable=False,
+        index=True
+    )
+
+    machine_id = Column(
+        String(128),
+        nullable=False,
+        index=True
+    )
+
+    issued_at = Column(
+        DateTime,
+        nullable=False
+    )
+
+    expires_at = Column(
+        DateTime,
+        nullable=False
+    )
+
+    subscription_expiry_at_issue = Column(
+        DateTime,
+        nullable=True
+    )
+
+    revoked = Column(
+        Boolean,
+        default=False,
+        nullable=False
+    )
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False
+    )
+
+    user = relationship(
+        "User",
+        back_populates="offline_authorizations"
     )
