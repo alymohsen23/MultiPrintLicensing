@@ -21,6 +21,7 @@ from models import (
     SoftwareEntitlement,
     Subscription,
     MachineBinding,
+    OfflineAuthorization,
 )
 from auth import (
     verify_password,
@@ -29,6 +30,8 @@ from auth import (
     SECRET_KEY,
     ALGORITHM,
 )
+
+from offline_crypto import sign_authorization
 
 
 # ============================================================
@@ -131,6 +134,18 @@ class MachineActivationRequest(BaseModel):
     )
 
 
+class OfflineAuthorizationRequest(BaseModel):
+    machine_id: str = Field(
+        min_length=1,
+        max_length=128,
+    )
+
+    computer_name: str | None = Field(
+        default=None,
+        max_length=255,
+    )
+
+
 class AccountStatusRequest(BaseModel):
     is_active: bool
 
@@ -141,6 +156,17 @@ class AccountStatusRequest(BaseModel):
 
 def utc_now():
     return datetime.utcnow()
+
+
+def format_utc_z(value: datetime) -> str:
+    """
+    Convert the server's naive UTC datetime into an explicit
+    ISO-8601 UTC string ending in Z.
+    """
+
+    return value.strftime(
+        "%Y-%m-%dT%H:%M:%S.%fZ"
+    )
 
 
 def generate_license_key():
@@ -1122,6 +1148,236 @@ def license_activate(
     return {
         "message": "License activated successfully.",
         "customer": get_customer_status(user),
+    }
+
+
+# ============================================================
+# DESKTOP OFFLINE AUTHORIZATION
+# ============================================================
+
+@app.post("/license/offline/issue")
+def issue_offline_authorization(
+    data: OfflineAuthorizationRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Issue a signed 30-day offline authorization.
+
+    Requirements:
+    - authenticated customer
+    - active account
+    - owns MultiPrint
+    - active, non-expired subscription
+    - machine is either unbound or matches the existing binding
+
+    The existing machine-binding behavior is preserved here.
+    """
+
+    user = (
+        db.query(User)
+        .filter(User.id == current_user.id)
+        .first()
+    )
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found.",
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=403,
+            detail="Account is disabled.",
+        )
+
+    # --------------------------------------------------------
+    # SOFTWARE OWNERSHIP
+    # --------------------------------------------------------
+
+    entitlement = user.software_entitlement
+
+    if not entitlement or not entitlement.owned:
+        raise HTTPException(
+            status_code=403,
+            detail="This account does not own MultiPrint.",
+        )
+
+    # --------------------------------------------------------
+    # ACTIVE SUBSCRIPTION
+    # --------------------------------------------------------
+
+    subscription = user.subscription
+
+    if not subscription:
+        raise HTTPException(
+            status_code=403,
+            detail="No active subscription.",
+        )
+
+    now = utc_now()
+
+    if (
+        not subscription.is_active
+        or not subscription.expiry_date
+        or subscription.expiry_date <= now
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Subscription is inactive or expired."
+            ),
+        )
+
+    # --------------------------------------------------------
+    # MACHINE BINDING
+    # --------------------------------------------------------
+
+    machine = user.machine_binding
+
+    if machine:
+
+        if machine.machine_id != data.machine_id:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "This account is already activated "
+                    "on another computer."
+                ),
+            )
+
+        machine.last_seen_at = now
+
+        if data.computer_name:
+            machine.computer_name = (
+                data.computer_name
+            )
+
+    else:
+
+        machine = MachineBinding(
+            user_id=user.id,
+            machine_id=data.machine_id,
+            computer_name=data.computer_name,
+            activated_at=now,
+            last_seen_at=now,
+        )
+
+        db.add(machine)
+
+    # --------------------------------------------------------
+    # EXACT 30-DAY AUTHORIZATION
+    # --------------------------------------------------------
+
+    expires_at = (
+        now + timedelta(days=30)
+    )
+
+    authorization_id = (
+        secrets.token_urlsafe(32)
+    )
+
+    authorization = {
+        "authorization_id": authorization_id,
+
+        "software": "MultiPrint",
+
+        "user_id": user.id,
+
+        "username": user.username,
+
+        "machine_id": data.machine_id,
+
+        "issued_at": format_utc_z(now),
+
+        "expires_at": format_utc_z(
+            expires_at
+        ),
+
+        "subscription_expires_at": (
+            format_utc_z(
+                subscription.expiry_date
+            )
+            if subscription.expiry_date
+            else None
+        ),
+    }
+
+    # --------------------------------------------------------
+    # SIGN AUTHORIZATION
+    # --------------------------------------------------------
+
+    try:
+
+        signature = sign_authorization(
+            authorization
+        )
+
+    except RuntimeError as error:
+
+        db.rollback()
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Offline authorization signing "
+                "is not configured on the server."
+            ),
+        ) from error
+
+    except Exception as error:
+
+        db.rollback()
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Unable to create offline authorization."
+            ),
+        ) from error
+
+    # --------------------------------------------------------
+    # DATABASE AUDIT RECORD
+    # --------------------------------------------------------
+
+    offline_record = OfflineAuthorization(
+        authorization_id=authorization_id,
+
+        user_id=user.id,
+
+        machine_id=data.machine_id,
+
+        issued_at=now,
+
+        expires_at=expires_at,
+
+        subscription_expiry_at_issue=(
+            subscription.expiry_date
+        ),
+
+        revoked=False,
+    )
+
+    db.add(offline_record)
+
+    db.commit()
+
+    db.refresh(offline_record)
+    db.refresh(user)
+
+    # --------------------------------------------------------
+    # RESPONSE
+    # --------------------------------------------------------
+
+    return {
+        "message": (
+            "Offline authorization issued successfully."
+        ),
+
+        "authorization": authorization,
+
+        "signature": signature,
     }
 
 
