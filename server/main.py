@@ -1555,6 +1555,51 @@ def validate_offline_authorization(
         )
 
     machine.last_seen_at = now
+
+    # If the subscription was renewed after this authorization was issued,
+    # replace it with a newly signed authorization whose expiry follows the
+    # current subscription. This keeps the offline period synchronized with
+    # the subscription whenever the computer reconnects.
+    current_subscription_expiry = format_utc_z(subscription.expiry_date)
+    refresh_required = (
+        authorization.get("expires_at") != current_subscription_expiry
+    )
+
+    refreshed_authorization = None
+    refreshed_signature = None
+
+    if refresh_required:
+        new_authorization_id = secrets.token_urlsafe(32)
+
+        refreshed_authorization = {
+            "authorization_id": new_authorization_id,
+            "software": "MultiPrint",
+            "user_id": user.id,
+            "username": user.username,
+            "machine_id": machine.machine_id,
+            "issued_at": format_utc_z(now),
+            "expires_at": current_subscription_expiry,
+            "subscription_expires_at": current_subscription_expiry,
+        }
+
+        refreshed_signature = sign_authorization(
+            refreshed_authorization
+        )
+
+        db.add(
+            OfflineAuthorization(
+                authorization_id=new_authorization_id,
+                user_id=user.id,
+                machine_id=machine.machine_id,
+                issued_at=now,
+                expires_at=subscription.expiry_date,
+                subscription_expiry_at_issue=subscription.expiry_date,
+                revoked=False,
+            )
+        )
+
+        record.revoked = True
+
     db.commit()
 
     return {
@@ -1562,9 +1607,12 @@ def validate_offline_authorization(
         "message": "Offline authorization is valid.",
         "username": user.username,
         "machine_id": machine.machine_id,
-        "subscription_expiry": format_utc_z(subscription.expiry_date),
-        "authorization_expires_at": format_utc_z(record.expires_at),
+        "subscription_expiry": current_subscription_expiry,
+        "authorization_expires_at": format_utc_z(subscription.expiry_date),
         "server_time": format_utc_z(now),
+        "refresh_required": refresh_required,
+        "authorization": refreshed_authorization,
+        "signature": refreshed_signature,
     }
 
 
