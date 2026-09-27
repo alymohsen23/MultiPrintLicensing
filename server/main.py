@@ -389,14 +389,119 @@ def get_customer_status(user: User):
 # BASIC ROUTES
 # ============================================================
 
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 def root():
 
-    return {
-        "name": "MultiPrint Licensing Server",
-        "version": "2.3.0",
-        "status": "online",
-    }
+    return HTMLResponse(
+        content="""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MultiPrint</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: Arial, Helvetica, sans-serif;
+            background: linear-gradient(135deg, #1976D2, #F57C00);
+            color: #1F2937;
+        }
+
+        .card {
+            width: min(92%, 560px);
+            padding: 48px 40px;
+            text-align: center;
+            background: #FFFFFF;
+            border-radius: 22px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.20);
+        }
+
+        .logo {
+            width: 78px;
+            height: 78px;
+            margin: 0 auto 22px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 18px;
+            background: #1976D2;
+            color: #FFFFFF;
+            font-size: 30px;
+            font-weight: 800;
+        }
+
+        h1 {
+            margin: 0 0 12px;
+            font-size: 34px;
+        }
+
+        p {
+            margin: 0 auto 28px;
+            max-width: 430px;
+            line-height: 1.6;
+            color: #6B7280;
+            font-size: 16px;
+        }
+
+        .download {
+            display: inline-block;
+            padding: 15px 28px;
+            border-radius: 10px;
+            background: #F57C00;
+            color: #FFFFFF;
+            text-decoration: none;
+            font-size: 16px;
+            font-weight: 700;
+        }
+
+        .download:hover {
+            opacity: 0.92;
+        }
+
+        .note {
+            margin-top: 22px;
+            font-size: 12px;
+            color: #9CA3AF;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="card">
+        <div class="logo">MP</div>
+
+        <h1>MultiPrint</h1>
+
+        <p>
+            MultiPrint is a Windows desktop printing application
+            designed for fast and flexible multi-printer printing.
+        </p>
+
+        <a
+            class="download"
+            href="https://github.com/alymohsen23/MultiPrintLicensing/releases/download/v1.0.0/MultiPrint-Setup.exe"
+        >
+            Download MultiPrint
+        </a>
+
+        <div class="note">
+            Windows installer · MultiPrint v1.0.0
+        </div>
+    </div>
+</body>
+</html>
+"""
+    )
 
 
 @app.get("/health")
