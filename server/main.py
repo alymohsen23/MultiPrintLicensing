@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from typing import Any
 import secrets
 import string
 import socket
@@ -57,7 +58,7 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title="MultiPrint Licensing Server",
     description="Licensing and customer management server for MultiPrint",
-    version="2.3.0",
+    version="2.4.0",
 )
 
 
@@ -153,6 +154,10 @@ class OfflineAuthorizationRequest(BaseModel):
         default=None,
         max_length=255,
     )
+
+class OfflineAuthorizationValidationRequest(BaseModel):
+    authorization: dict[str, Any]
+    signature: str = Field(min_length=1)
 
 
 class AccountStatusRequest(BaseModel):
@@ -825,6 +830,14 @@ def deactivate_subscription(
 
     subscription.is_active = False
 
+    db.query(OfflineAuthorization).filter(
+        OfflineAuthorization.user_id == user.id,
+        OfflineAuthorization.revoked == False,
+    ).update(
+        {"revoked": True},
+        synchronize_session=False,
+    )
+
     db.commit()
     db.refresh(user)
 
@@ -907,6 +920,14 @@ def reset_machine(
             "message": "Customer has no machine binding.",
             "customer": get_customer_status(user),
         }
+
+    db.query(OfflineAuthorization).filter(
+        OfflineAuthorization.user_id == user.id,
+        OfflineAuthorization.revoked == False,
+    ).update(
+        {"revoked": True},
+        synchronize_session=False,
+    )
 
     db.delete(machine)
     db.commit()
@@ -1276,12 +1297,16 @@ def issue_offline_authorization(
         db.add(machine)
 
     # --------------------------------------------------------
-    # EXACT 30-DAY AUTHORIZATION
+    # AUTHORIZATION VALIDITY = SUBSCRIPTION VALIDITY
     # --------------------------------------------------------
 
-    expires_at = (
-        now + timedelta(days=30)
-    )
+    expires_at = subscription.expiry_date
+
+    if expires_at <= now:
+        raise HTTPException(
+            status_code=403,
+            detail="Subscription is inactive or expired.",
+        )
 
     authorization_id = (
         secrets.token_urlsafe(32)
@@ -1387,6 +1412,159 @@ def issue_offline_authorization(
         "authorization": authorization,
 
         "signature": signature,
+    }
+
+
+# ============================================================
+# DESKTOP OFFLINE AUTHORIZATION VALIDATION
+# ============================================================
+
+@app.post("/license/offline/validate")
+def validate_offline_authorization(
+    data: OfflineAuthorizationValidationRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Validate a previously issued offline authorization whenever the
+    desktop can reach the licensing server.
+    """
+
+    from offline_crypto import verify_authorization_signature
+
+    authorization = data.authorization
+
+    if not verify_authorization_signature(
+        authorization,
+        data.signature,
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Offline authorization signature is invalid.",
+        )
+
+    authorization_id = authorization.get("authorization_id")
+    user_id = authorization.get("user_id")
+    machine_id = authorization.get("machine_id")
+
+    if not authorization_id or not user_id or not machine_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Offline authorization is incomplete.",
+        )
+
+    record = (
+        db.query(OfflineAuthorization)
+        .filter(
+            OfflineAuthorization.authorization_id
+            == authorization_id
+        )
+        .first()
+    )
+
+    if not record:
+        raise HTTPException(
+            status_code=403,
+            detail="Offline authorization is not recognized by the licensing server.",
+        )
+
+    if record.revoked:
+        raise HTTPException(
+            status_code=403,
+            detail="Offline authorization has been revoked.",
+        )
+
+    if record.user_id != user_id or record.machine_id != machine_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Offline authorization does not match its server record.",
+        )
+
+    user = (
+        db.query(User)
+        .filter(User.id == record.user_id)
+        .first()
+    )
+
+    if not user:
+        raise HTTPException(
+            status_code=403,
+            detail="The licensed account no longer exists.",
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=403,
+            detail="The licensed account is disabled.",
+        )
+
+    entitlement = user.software_entitlement
+
+    if not entitlement or not entitlement.owned:
+        raise HTTPException(
+            status_code=403,
+            detail="The account no longer owns MultiPrint.",
+        )
+
+    subscription = user.subscription
+    now = utc_now()
+
+    if (
+        not subscription
+        or not subscription.is_active
+        or not subscription.expiry_date
+        or subscription.expiry_date <= now
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="The MultiPrint subscription is inactive or expired.",
+        )
+
+    machine = user.machine_binding
+
+    if not machine:
+        raise HTTPException(
+            status_code=403,
+            detail="No machine is currently bound to this account. Administrator action is required.",
+        )
+
+    if machine.machine_id != machine_id:
+        raise HTTPException(
+            status_code=403,
+            detail="This account is bound to a different computer.",
+        )
+
+    if (
+        authorization.get("subscription_expires_at")
+        != format_utc_z(record.subscription_expiry_at_issue)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Offline authorization subscription data does not match the server record.",
+        )
+
+    if authorization.get("expires_at") != format_utc_z(record.expires_at):
+        raise HTTPException(
+            status_code=403,
+            detail="Offline authorization expiry does not match the server record.",
+        )
+
+    if record.expires_at <= now:
+        raise HTTPException(
+            status_code=403,
+            detail="Offline authorization has expired. Reconnect to renew authorization.",
+        )
+
+    machine.last_seen_at = now
+    db.commit()
+
+    return {
+        "valid": True,
+        "message": "Offline authorization is valid.",
+        "username": user.username,
+        "machine_id": machine.machine_id,
+        "subscription_expiry": format_utc_z(subscription.expiry_date),
+        "authorization_expires_at": format_utc_z(record.expires_at),
+        "server_time": format_utc_z(now),
     }
 
 
